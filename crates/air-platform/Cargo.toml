@@ -1,0 +1,22 @@
+[package]
+name = "air-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Platform-specific tray, autostart, service, privilege, and process helpers for Air."
+publish = false
+
+[dependencies]
+air-error.workspace = true
+air-telemetry.workspace = true
+directories.workspace = true
+gpui.workspace = true
+image.workspace = true
+raw-window-handle.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

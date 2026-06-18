@@ -1,0 +1,63 @@
+[workspace]
+members = [
+    "crates/air-desktop",
+    "crates/air-app",
+    "crates/air-ui",
+    "crates/air-mihomo",
+    "crates/air-config",
+    "crates/air-storage",
+    "crates/air-platform",
+    "crates/air-settings",
+    "crates/air-telemetry",
+    "crates/air-error",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/OWNER/air"
+
+[workspace.dependencies]
+air-app = { path = "crates/air-app" }
+air-config = { path = "crates/air-config" }
+air-error = { path = "crates/air-error" }
+air-mihomo = { path = "crates/air-mihomo" }
+air-platform = { path = "crates/air-platform" }
+air-settings = { path = "crates/air-settings" }
+air-storage = { path = "crates/air-storage" }
+air-telemetry = { path = "crates/air-telemetry" }
+air-ui = { path = "crates/air-ui" }
+
+anyhow = "1"
+async-trait = "0.1"
+directories = "6"
+futures = "0.3"
+gpui = { git = "https://github.com/zed-industries/zed", package = "gpui" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component.git", rev = "196b9259b562c26be97c92f88c798bbeefa9cb3d", package = "gpui-component", default-features = false, features = ["tree-sitter-yaml", "tree-sitter-javascript"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", package = "gpui_platform" }
+flate2 = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"] }
+mimalloc = { version = "0.1.52", features = ["extended"] }
+raw-window-handle = "0.6"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rquickjs = "0.11"
+rust-embed = { version = "8.7.2", features = ["interpolate-folder-path", "include-exclude"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+tar = "0.4"
+tempfile = "3"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "local-offset"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "process", "io-util", "macros"] }
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2"
+zip = { version = "6", default-features = false, features = ["deflate"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Services", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

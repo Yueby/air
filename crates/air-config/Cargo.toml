@@ -1,0 +1,22 @@
+[package]
+name = "air-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "mihomo YAML models, validation, merge logic, and override script support for Air."
+publish = false
+
+[dependencies]
+air-error.workspace = true
+air-telemetry.workspace = true
+async-trait.workspace = true
+rquickjs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

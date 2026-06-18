@@ -1,0 +1,13 @@
+[package]
+name = "air-error"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared application error types for Air."
+publish = false
+
+[dependencies]
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true

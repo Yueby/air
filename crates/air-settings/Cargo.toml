@@ -1,0 +1,16 @@
+[package]
+name = "air-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Application settings model and compatibility parsing for Air."
+publish = false
+
+[dependencies]
+air-error.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+toml.workspace = true

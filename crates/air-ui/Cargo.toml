@@ -1,0 +1,32 @@
+[package]
+name = "air-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GPUI user interface, routes, components, pages, and assets for Air."
+publish = false
+
+[dependencies]
+air-app.workspace = true
+air-config.workspace = true
+air-error.workspace = true
+air-mihomo.workspace = true
+air-platform.workspace = true
+air-settings.workspace = true
+air-telemetry.workspace = true
+anyhow.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true
+gpui_platform.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+air-storage.workspace = true
+tempfile.workspace = true

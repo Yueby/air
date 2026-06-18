@@ -1,0 +1,24 @@
+[package]
+name = "air-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Desktop binary crate for the Air mihomo manager."
+publish = false
+
+[[bin]]
+name = "air"
+path = "src/main.rs"
+
+[dependencies]
+air-app.workspace = true
+air-error.workspace = true
+air-platform.workspace = true
+air-telemetry.workspace = true
+air-ui.workspace = true
+mimalloc.workspace = true
+
+[build-dependencies]
+embed-resource = "3"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }

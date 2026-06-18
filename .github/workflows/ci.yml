@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and publish Windows release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Read workspace version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Failed to read workspace version from Cargo.toml"
+          }
+          "workspace_version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Build release binary
+        run: cargo build --locked --release -p air-desktop --bin air
+
+      - name: Prepare packaged artifact
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.workspace_version }}"
+          $tag = "v${version}"
+          $releaseName = "Air ${version}"
+          $artifactName = "air-windows-x86_64-${tag}.zip"
+          $stagingDir = Join-Path $env:RUNNER_TEMP "air-release"
+          if (Test-Path $stagingDir) {
+            Remove-Item -LiteralPath $stagingDir -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $stagingDir | Out-Null
+          Copy-Item -LiteralPath "target/release/air.exe" -Destination (Join-Path $stagingDir "air.exe")
+          Compress-Archive -LiteralPath (Join-Path $stagingDir "air.exe") -DestinationPath $artifactName -Force
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release_name=$releaseName" >> $env:GITHUB_OUTPUT
+          "artifact_name=$artifactName" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.artifact_name }}
+          if-no-files-found: error
+
+      - name: Create Git tag
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.package.outputs.tag }}" "${env:GITHUB_SHA}"
+          git push origin "${{ steps.package.outputs.tag }}"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.package.outputs.tag }}
+          name: ${{ steps.package.outputs.release_name }}
+          generate_release_notes: true
+          files: ${{ steps.package.outputs.artifact_name }}

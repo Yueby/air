@@ -1,0 +1,45 @@
+# Rust build output
+/target/
+
+# Bundled mihomo and geodata archives downloaded by build.rs
+/mihomo/
+
+# Local application state and user data
+/config/
+/data/
+/logs/
+/diagnostics/
+*.log
+*.log.*
+*.dmp
+*.dump
+
+# Local secrets and environment overrides
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Release and packaging output
+/dist/
+/release/
+/artifacts/
+*.msi
+*.exe
+*.zip
+*.tar.gz
+*.7z
+
+# Editor and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp

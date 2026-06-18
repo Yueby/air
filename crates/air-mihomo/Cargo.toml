@@ -1,0 +1,44 @@
+[package]
+name = "air-mihomo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Unified mihomo runtime, API, and domain support for Air."
+publish = false
+
+[build-dependencies]
+flate2.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde.workspace = true
+zip.workspace = true
+
+[dependencies]
+air-config.workspace = true
+air-error.workspace = true
+air-platform.workspace = true
+air-telemetry.workspace = true
+async-trait.workspace = true
+flate2.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+url.workspace = true
+zip.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
