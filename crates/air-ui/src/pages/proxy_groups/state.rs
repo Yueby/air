@@ -609,7 +609,13 @@ impl GroupPageState {
                 GroupListItem {
                     name: name.clone(),
                     kind: proxy_group_type_display_label(raw_kind).to_string(),
-                    document_index: runtime_base_index + runtime_index,
+                    // 运行态组同样遵循投影顺序（来自内核 GLOBAL.all），不再强制沉到配置组之后并按
+                    // 名称字母序排列，避免“节点选择”等应置顶的运行态组被挤到列表末尾。
+                    document_index: self
+                        .runtime_order
+                        .get(name)
+                        .copied()
+                        .unwrap_or(runtime_base_index + runtime_index),
                     current: state.selected.clone().unwrap_or_else(|| "-".to_string()),
                     member_count,
                     total_member_count: state.members.len(),

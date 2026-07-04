@@ -127,8 +127,9 @@ async fn refresh_proxy_group_projection_with_mode(
     );
     let projection = air_mihomo::groups::ProxyGroupRuntimeProjection {
         // `/proxies` 同时返回代理组和代理节点；app 层先划分类型，UI 只消费已经规整好的代理组投影。
-        // 订阅或运行配置文档只作为顺序和成员来源解析锚点，不能替代内核运行态返回值。
-        states: collection.selection_states_in_config_order(
+        // 组顺序跟随内核 `GLOBAL.all` 权威顺序，与 Clash Verge / Sparkle 一致；订阅或运行配置文档
+        // 只作为成员来源与配置组投影的解析锚点，不再作为组顺序的唯一依据。
+        states: collection.selection_states_in_runtime_order(
             &document.typed,
             &groups,
             &proxies_response.proxies,
