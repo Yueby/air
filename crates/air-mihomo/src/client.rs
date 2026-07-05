@@ -26,7 +26,7 @@ pub struct MihomoHttpClient {
 impl MihomoHttpClient {
     pub fn new(endpoint: MihomoEndpoint) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: controller_http_client(),
             endpoint,
         }
     }
@@ -327,6 +327,16 @@ impl MihomoHttpClient {
     fn request_url(&self, segments: &[&str], query: &[(&str, String)]) -> AppResult<Url> {
         build_url(&self.endpoint.base_url, segments, query)
     }
+}
+
+fn controller_http_client() -> reqwest::Client {
+    // external-controller 始终是本机/局域网控制面请求，不能继承 HTTP_PROXY/all_proxy 等
+    // 环境代理。否则用户开启系统代理或 TUN 时，`127.0.0.1:9090/version` 会被发到代理
+    // 端口，引发“核心已监听但健康检查超时”的假失败。
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("mihomo controller client options should be valid")
 }
 
 #[async_trait]

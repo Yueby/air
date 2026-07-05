@@ -137,7 +137,7 @@ pub struct MihomoStreamClient {
 impl MihomoStreamClient {
     pub fn new(endpoint: MihomoEndpoint) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: controller_stream_http_client(),
             endpoint,
         }
     }
@@ -163,6 +163,15 @@ impl MihomoStreamClient {
             handle: Some(handle),
         }
     }
+}
+
+fn controller_stream_http_client() -> reqwest::Client {
+    // 流式监控同样只访问 mihomo external-controller，必须绕过环境代理，避免日志/流量
+    // HTTP 流被系统代理或 TUN 链路劫持，导致本地控制面连接异常。
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("mihomo stream controller client options should be valid")
 }
 
 struct StreamRunner {
