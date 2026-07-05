@@ -17,6 +17,7 @@ use serde_yaml::Value;
 use air_config::model::{MihomoConfigDocument, ProxyNode};
 use air_telemetry::redaction::redact_log_value;
 
+use super::share_link;
 use super::{
     SubscriptionCacheMetadata, SubscriptionSource, SubscriptionTimestamp,
     SubscriptionUpdateOutcome, SubscriptionUpdateResult, SubscriptionUserInfo,
@@ -169,6 +170,7 @@ where
                 return Err(error);
             }
         };
+        let cached_content = parsed.cache_content(&content)?;
 
         let mut result = SubscriptionUpdateResult::success(now_timestamp(), content.len() as u64);
         result.status_code = Some(status_code);
@@ -177,7 +179,7 @@ where
         result.user_info = user_info;
         let metadata = self
             .store
-            .record_update(&source.id, result, Some(content.as_bytes()))
+            .record_update(&source.id, result, Some(&cached_content))
             .await?;
 
         Ok(SubscriptionPipelineReport {
@@ -208,6 +210,11 @@ where
         let mut request = client.get(url);
 
         for (name, value) in source.request_headers.iter() {
+            // User-Agent 由后面的统一规则生成；这里跳过自定义头里的同名项，避免 reqwest 合并
+            // 多个 UA 值后让订阅服务看到非预期顺序。
+            if name.eq_ignore_ascii_case(USER_AGENT.as_str()) {
+                continue;
+            }
             let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
                 SubscriptionPipelineError::InvalidRequest(format!("订阅请求头名称无效: {name}"))
             })?;
@@ -217,9 +224,11 @@ where
             })?;
             request = request.header(header_name, header_value);
         }
+        // 订阅下载 UA 优先使用已知 mihomo 版本，便于兼容按 Clash Meta UA 返回内容的机场；
+        // 未启动核心或测试路径没有核心版本时，保留订阅源自定义 UA。
         request = request.header(
             USER_AGENT,
-            subscription_download_user_agent(self.core_version.as_deref()),
+            effective_subscription_user_agent(self.core_version.as_deref(), source),
         );
 
         if let Some(previous) = previous {
@@ -323,6 +332,27 @@ pub struct ParsedSubscription {
     pub document: MihomoConfigDocument,
     pub proxies: Vec<ProxyNode>,
     pub diagnostics: Vec<SubscriptionDiagnostic>,
+}
+
+impl ParsedSubscription {
+    /// 返回应写入订阅缓存的内容。
+    ///
+    /// YAML 订阅保留远端原文，尽量不破坏用户已有排版；base64 分享链接订阅则必须缓存转换后的
+    /// mihomo YAML，因为 app 层的预览、选择和运行配置合并都只读取缓存 YAML，而不会重新拿原始
+    /// base64 正文走订阅解析器。
+    fn cache_content(&self, original_content: &str) -> Result<Vec<u8>, SubscriptionPipelineError> {
+        match self.format {
+            SubscriptionContentFormat::MihomoYaml => Ok(original_content.as_bytes().to_vec()),
+            SubscriptionContentFormat::Base64Nodes => serde_yaml::to_string(&self.document)
+                .map(|yaml| yaml.into_bytes())
+                .map_err(|error| {
+                    SubscriptionPipelineError::InvalidResponse(vec![SubscriptionDiagnostic::error(
+                        "base64-cache-yaml",
+                        format!("base64 订阅转换后的 YAML 序列化失败: {error}"),
+                    )])
+                }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -452,7 +482,7 @@ fn log_subscription_diagnostics(
 
 #[derive(Clone, Debug, Default)]
 pub struct SubscriptionParser {
-    base64_parser: ReservedBase64NodeParser,
+    base64_parser: Base64NodeParser,
 }
 
 impl SubscriptionParser {
@@ -511,18 +541,82 @@ impl SubscriptionParser {
     }
 }
 
+/// base64 分享链接订阅解析器。
+///
+/// 将 base64（或明文）分享链接列表转换为 mihomo 节点：解码 -> 逐行解析 -> 组装成只含
+/// `proxies` 的 [`MihomoConfigDocument`]。无法识别的行被跳过并汇总成告警诊断；只有当解码失败
+/// 或没有解析出任何有效节点时才返回错误。
 #[derive(Clone, Debug, Default)]
-pub struct ReservedBase64NodeParser;
+pub struct Base64NodeParser;
 
-impl ReservedBase64NodeParser {
-    pub fn parse(&self, _content: &str) -> Result<ParsedSubscription, SubscriptionPipelineError> {
-        let diagnostics = vec![SubscriptionDiagnostic::error(
-            "base64-parser-reserved",
-            "base64 节点订阅解析接口已预留，当前版本尚未实现转换",
-        )];
-        log_subscription_diagnostics("subscription-base64-parser", 0, &diagnostics);
-        Err(SubscriptionPipelineError::Parse { diagnostics })
+impl Base64NodeParser {
+    pub fn parse(&self, content: &str) -> Result<ParsedSubscription, SubscriptionPipelineError> {
+        let Some(payload) = share_link::extract_share_link_payload(content) else {
+            let diagnostics = vec![SubscriptionDiagnostic::error(
+                "base64-decode-failed",
+                "订阅内容无法按 base64 分享链接解码",
+            )];
+            log_subscription_diagnostics("subscription-base64-parser", 0, &diagnostics);
+            return Err(SubscriptionPipelineError::Parse { diagnostics });
+        };
+
+        let conversion = share_link::convert_share_links(&payload);
+        let mut diagnostics =
+            base64_conversion_diagnostics(conversion.skipped, &conversion.unsupported_schemes);
+        if conversion.proxies.is_empty() {
+            diagnostics.insert(
+                0,
+                SubscriptionDiagnostic::error("base64-empty", "base64 订阅未解析出任何有效节点"),
+            );
+            log_subscription_diagnostics("subscription-base64-parser", 0, &diagnostics);
+            return Err(SubscriptionPipelineError::Parse { diagnostics });
+        }
+
+        let proxies = conversion.proxies;
+        let document = MihomoConfigDocument {
+            proxies: proxies.clone(),
+            ..MihomoConfigDocument::default()
+        };
+        log_subscription_diagnostics("subscription-base64-parser", proxies.len(), &diagnostics);
+
+        Ok(ParsedSubscription {
+            format: SubscriptionContentFormat::Base64Nodes,
+            document,
+            proxies,
+            diagnostics,
+        })
     }
+}
+
+fn base64_conversion_diagnostics(
+    skipped: usize,
+    unsupported_schemes: &std::collections::BTreeSet<String>,
+) -> Vec<SubscriptionDiagnostic> {
+    let mut diagnostics = Vec::new();
+    if skipped > 0 {
+        diagnostics.push(SubscriptionDiagnostic::warning(
+            "base64-skipped-links",
+            format!("已跳过 {skipped} 条无法解析的分享链接"),
+        ));
+    }
+    if !unsupported_schemes.is_empty() {
+        let schemes = unsupported_schemes
+            .iter()
+            .map(|scheme| {
+                let mut clipped = scheme.chars().take(32).collect::<String>();
+                if scheme.chars().count() > 32 {
+                    clipped.push('…');
+                }
+                clipped
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        diagnostics.push(SubscriptionDiagnostic::warning(
+            "base64-unsupported-scheme",
+            format!("订阅包含当前不支持的协议: {schemes}"),
+        ));
+    }
+    diagnostics
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -650,12 +744,9 @@ fn looks_like_proxy_url(value: &str) -> bool {
 }
 
 fn is_probably_base64_subscription(content: &str) -> bool {
-    let compact = content.trim();
-    compact.len() >= 16
-        && compact.lines().count() <= 3
-        && compact
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '\r' | '\n'))
+    // 只有当内容能被解码/识别为分享链接负载（base64 或明文链接列表）时才走 base64 解析分支，
+    // 避免把普通的非映射 YAML 误判为节点订阅。
+    share_link::extract_share_link_payload(content).is_some()
 }
 
 fn subscription_download_user_agent(core_version: Option<&str>) -> String {
@@ -666,6 +757,19 @@ fn subscription_download_user_agent(core_version: Option<&str>) -> String {
         .filter(|version| !version.is_empty())
         .unwrap_or("0.0.0");
     format!("clash.meta/v{version}")
+}
+
+fn effective_subscription_user_agent(
+    core_version: Option<&str>,
+    source: &SubscriptionSource,
+) -> String {
+    match core_version {
+        Some(version) => subscription_download_user_agent(Some(version)),
+        None => source
+            .user_agent
+            .clone()
+            .unwrap_or_else(|| subscription_download_user_agent(None)),
+    }
 }
 
 fn parse_subscription_user_info(value: &str) -> Option<SubscriptionUserInfo> {
@@ -1011,6 +1115,45 @@ proxies:
     }
 
     #[tokio::test]
+    async fn downloads_base64_subscription_and_caches_converted_yaml() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD;
+
+        let link = "ss://YWVzLTI1Ni1nY206c2VjcmV0@1.2.3.4:8388#Node";
+        let encoded = STANDARD.encode(link);
+        let server = FakeHttpServer::spawn(vec![FakeResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: Box::leak(encoded.into_boxed_str()),
+        }]);
+        let store = MemoryUpdateStore::default();
+        let pipeline = SubscriptionUpdatePipeline::with_client(
+            store.clone(),
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap(),
+        );
+
+        let report = pipeline
+            .update(&source(server.url.clone()))
+            .await
+            .expect("base64 subscription should update");
+
+        assert_eq!(report.parsed.format, SubscriptionContentFormat::Base64Nodes);
+        let cached = store
+            .cached_content("sub-a")
+            .expect("converted YAML is cached");
+        let cached_text = String::from_utf8(cached.clone()).expect("cache should be UTF-8 YAML");
+        assert!(cached_text.contains("proxies:"));
+        assert!(!cached_text.contains("ss://"));
+        let document: MihomoConfigDocument =
+            serde_yaml::from_slice(&cached).expect("cached converted content should be YAML");
+        assert_eq!(document.proxies.len(), 1);
+        assert_eq!(document.proxies[0].name, "Node");
+    }
+
+    #[tokio::test]
     async fn forwards_custom_request_headers_including_user_agent() {
         let server = FakeHttpServer::spawn(vec![FakeResponse {
             status: 200,
@@ -1262,17 +1405,55 @@ proxies:
     }
 
     #[test]
-    fn reserves_base64_subscription_parser_interface() {
+    fn parses_base64_shadowsocks_subscription() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD;
+
+        // 一行 SS 分享链接经 base64 编码后作为订阅正文。
+        let link = "ss://YWVzLTI1Ni1nY206c2VjcmV0@1.2.3.4:8388#Node";
+        let content = STANDARD.encode(link);
+
+        let parsed = SubscriptionParser::default()
+            .parse(&content)
+            .expect("base64 subscription should now parse into proxies");
+
+        assert_eq!(parsed.format, SubscriptionContentFormat::Base64Nodes);
+        assert_eq!(parsed.proxies.len(), 1);
+        assert_eq!(parsed.proxies[0].name, "Node");
+        assert_eq!(parsed.document.proxies.len(), 1);
+    }
+
+    #[test]
+    fn base64_subscription_without_valid_nodes_reports_empty() {
+        use base64::Engine;
+        use base64::engine::general_purpose::STANDARD;
+
+        // 解码后是一条无法识别的链接，应报“未解析出任何有效节点”。
+        let content = STANDARD.encode("vmess://not-valid-json");
         let error = SubscriptionParser::default()
-            .parse("dm1lc3M6Ly9leGFtcGxlCg==")
-            .expect_err("base64 parser is intentionally reserved");
+            .parse(&content)
+            .expect_err("payload without valid nodes should fail");
 
         assert!(matches!(error, SubscriptionPipelineError::Parse { .. }));
         assert!(
             error
                 .diagnostics()
                 .iter()
-                .any(|diagnostic| diagnostic.code == "base64-parser-reserved")
+                .any(|diagnostic| diagnostic.code == "base64-empty")
+        );
+    }
+
+    #[test]
+    fn ordinary_text_with_https_url_is_not_base64_subscription() {
+        let error = SubscriptionParser::default()
+            .parse("https://example.com/sub?token=secret")
+            .expect_err("ordinary text with URL should keep YAML root diagnostic");
+
+        assert!(
+            error
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code == "yaml-root")
         );
     }
 

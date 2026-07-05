@@ -105,6 +105,7 @@ dependencies = [
  "air-platform",
  "air-telemetry",
  "async-trait",
+ "base64",
  "flate2",
  "futures",
  "reqwest",

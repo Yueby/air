@@ -19,6 +19,7 @@ air-error.workspace = true
 air-platform.workspace = true
 air-telemetry.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 flate2.workspace = true
 futures.workspace = true
 reqwest.workspace = true
