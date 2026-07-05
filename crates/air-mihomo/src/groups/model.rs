@@ -123,6 +123,80 @@ impl ProxyGroupCollection {
 
         states
     }
+
+    /// 按 mihomo `GLOBAL` 组的 `all` 顺序排列代理组，对齐 Clash Verge / Sparkle 等客户端的展示。
+    ///
+    /// `GLOBAL.all` 是内核加载配置后的权威顺序（同时包含代理组与节点），这里只挑出其中的可见
+    /// 代理组；未出现在 `GLOBAL.all` 中的可见组再按配置 `proxy-groups` 顺序兜底，最后追加纯运行态组。
+    /// 之所以不直接用配置文档顺序，是因为订阅缓存文档可能缺少 `proxy-groups`（例如仅含节点的订阅），
+    /// 导致像“节点选择”这类应置顶的组被当成运行态组沉到末尾，与用户熟悉的客户端顺序不一致。
+    pub fn selection_states_in_runtime_order(
+        &self,
+        document: &MihomoConfigDocument,
+        responses: &BTreeMap<String, ProxyResponse>,
+        all_responses: &BTreeMap<String, ProxyResponse>,
+    ) -> Vec<ProxyGroupSelectionState> {
+        let mut states = Vec::new();
+        let mut consumed = BTreeSet::new();
+
+        // 1. 依 GLOBAL.all 的权威顺序输出可见代理组。
+        if let Some((_, global)) = lookup_proxy_response_entry(all_responses, "GLOBAL") {
+            for member_name in &global.all {
+                if let Some((key, response)) = lookup_proxy_response_entry(responses, member_name) {
+                    if consumed.insert(key.clone()) {
+                        states.push(self.selection_state_for(
+                            key,
+                            response,
+                            all_responses,
+                            document,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // 2. GLOBAL.all 未覆盖的配置组按配置顺序兜底。
+        for group in &self.groups {
+            if let Some((key, response)) =
+                lookup_proxy_response_entry(responses, &group.common.name)
+            {
+                if consumed.insert(key.clone()) {
+                    states.push(group.selection_state(response, all_responses, document));
+                }
+            }
+        }
+
+        // 3. 仍未输出的纯运行态组稳定追加。
+        for (name, response) in responses {
+            if consumed.contains(name) {
+                continue;
+            }
+            states.push(runtime_only_selection_state(
+                name.clone(),
+                response,
+                all_responses,
+                document,
+            ));
+        }
+
+        states
+    }
+
+    /// 依据配置是否存在同名组，选择使用配置组投影或纯运行态投影。
+    fn selection_state_for(
+        &self,
+        name: &str,
+        response: &ProxyResponse,
+        all_responses: &BTreeMap<String, ProxyResponse>,
+        document: &MihomoConfigDocument,
+    ) -> ProxyGroupSelectionState {
+        match self.find_case_insensitive(name) {
+            Some(group) => group.selection_state(response, all_responses, document),
+            None => {
+                runtime_only_selection_state(name.to_string(), response, all_responses, document)
+            }
+        }
+    }
 }
 
 /// 单个代理组的领域表示。`raw` 私有保存，保证基础编辑不会丢弃高级字段。
@@ -1047,5 +1121,81 @@ proxy-groups:
             1
         );
         assert!(!written.proxies.contains(&"ss2".to_string()));
+    }
+
+    #[test]
+    fn orders_groups_by_global_all_like_other_clients() {
+        // 配置里只定义了 Proxy，运行态却先出现“节点选择”。按配置顺序会把运行态组沉底，
+        // 这里验证新方法跟随 GLOBAL.all 把“节点选择”排在最前，与 Sparkle / Clash Verge 一致。
+        let document = ConfigDocument::parse(
+            r#"
+proxy-groups:
+  - name: Proxy
+    type: select
+    proxies:
+      - DIRECT
+"#,
+        )
+        .expect("config should parse")
+        .typed;
+        let collection = ProxyGroupCollection::from_document(&document);
+
+        let mut responses = BTreeMap::new();
+        responses.insert(
+            "节点选择".to_string(),
+            ProxyResponse {
+                name: "节点选择".to_string(),
+                all: vec!["Proxy".to_string(), "DIRECT".to_string()],
+                now: "Proxy".to_string(),
+                kind: "Selector".to_string(),
+                history: Vec::new(),
+                extra: BTreeMap::new(),
+            },
+        );
+        responses.insert(
+            "Proxy".to_string(),
+            ProxyResponse {
+                name: "Proxy".to_string(),
+                all: vec!["DIRECT".to_string()],
+                now: "DIRECT".to_string(),
+                kind: "Selector".to_string(),
+                history: Vec::new(),
+                extra: BTreeMap::new(),
+            },
+        );
+
+        let mut all_responses = responses.clone();
+        all_responses.insert(
+            "GLOBAL".to_string(),
+            ProxyResponse {
+                name: "GLOBAL".to_string(),
+                all: vec!["节点选择".to_string(), "Proxy".to_string()],
+                now: "节点选择".to_string(),
+                kind: "Selector".to_string(),
+                history: Vec::new(),
+                extra: BTreeMap::new(),
+            },
+        );
+
+        let runtime_ordered: Vec<String> = collection
+            .selection_states_in_runtime_order(&document, &responses, &all_responses)
+            .into_iter()
+            .map(|state| state.group_name)
+            .collect();
+        assert_eq!(
+            runtime_ordered,
+            vec!["节点选择".to_string(), "Proxy".to_string()]
+        );
+
+        // 对照：旧的配置顺序方法会把运行态组“节点选择”排到配置组之后。
+        let config_ordered: Vec<String> = collection
+            .selection_states_in_config_order(&document, &responses, &all_responses)
+            .into_iter()
+            .map(|state| state.group_name)
+            .collect();
+        assert_eq!(
+            config_ordered,
+            vec!["Proxy".to_string(), "节点选择".to_string()]
+        );
     }
 }
